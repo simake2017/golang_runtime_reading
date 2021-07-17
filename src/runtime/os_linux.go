@@ -65,6 +65,7 @@ func futexsleep(addr *uint32, val uint32, ns int64) {
 // If any procs are sleeping on addr, wake up at most cnt.
 //go:nosplit
 func futexwakeup(addr *uint32, cnt uint32) {
+	//wangyang @@ 这里调用了相关的 futex 函数，第二个参数是相应的操作符
 	ret := futex(unsafe.Pointer(addr), _FUTEX_WAKE, cnt, nil, nil, 0)
 	if ret >= 0 {
 		return
@@ -162,6 +163,13 @@ func newosproc(mp *m, stk unsafe.Pointer) {
 	var oset sigset
 	sigprocmask(_SIG_SETMASK, &sigset_all, &oset)
 	// stk 是 g0.stack.hi，也就是说 g0 的堆栈是当前这个系统线程的堆栈，也被称为系统堆栈
+	/**
+	 	这里就是使用clone 系统调用去创建一个真正的 系统线程
+		然后这里会去调用mstart 函数
+		非常重要
+
+		结果返回的就是一个创建出来的线程
+	 */
 	ret := clone(cloneFlags, stk, unsafe.Pointer(mp), unsafe.Pointer(mp.g0), unsafe.Pointer(funcPC(mstart)))
 	sigprocmask(_SIG_SETMASK, &oset, nil)
 
@@ -313,6 +321,10 @@ func libpreinit() {
 // Called to initialize a new m (including the bootstrap m).
 // Called on the parent thread (main thread in case of bootstrap), can allocate memory.
 func mpreinit(mp *m) {
+	/**
+		声明 栈大小
+		gsignal就是一个创建了一个goroutine,用于处理信号
+	 */
 	mp.gsignal = malg(32 * 1024) // Linux wants >= 2K
 	mp.gsignal.m = mp
 }

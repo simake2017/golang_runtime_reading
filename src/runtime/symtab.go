@@ -383,6 +383,9 @@ const (
 // matched changes to the code in cmd/internal/ld/symtab.go:symtab.
 // moduledata is stored in statically allocated non-pointer memory;
 // none of the pointers here are visible to the garbage collector.
+/**
+wangyang 执行文件的数据，用于标识 bss data text 等部分
+ */
 type moduledata struct {
 	pclntable    []byte
 	ftab         []functab
@@ -605,6 +608,9 @@ func moduledataverify1(datap *moduledata) {
 //
 // If pc represents multiple functions because of inlining, it returns
 // the *Func describing the outermost function.
+/**
+	仍然是获取 funcInfo 然后获取 _Func
+ */
 func FuncForPC(pc uintptr) *Func {
 	return findfunc(pc)._Func()
 }
@@ -642,6 +648,11 @@ func findmoduledatap(pc uintptr) *moduledata {
 	return nil
 }
 
+/**
+	像这种 集成 一种指针类型的可以不需要初始化就直接调用
+	指针类型的方法
+	王洋 重要** 这里在 runtime newproc1 函数中使用
+ */
 type funcInfo struct {
 	*_func
 	datap *moduledata
@@ -650,11 +661,23 @@ type funcInfo struct {
 func (f funcInfo) valid() bool {
 	return f._func != nil
 }
+//todo 这里的转换要实验一下是否
+/**
+wangyang *** 这里的 _func 是指针类型,转为一个 指向Func 类型的结构体指针
 
+这里使用的时候 会转为 一种 不透明类型，不堆外暴露任何字段
+相应的函数会在转化为 func 类型
+ */
 func (f funcInfo) _Func() *Func {
 	return (*Func)(unsafe.Pointer(f._func))
 }
 
+/**
+	wangyang *** 这里用于寻找函数结构体 funcInfo
+	因为go是静态语言，所以在编译的时候便能够确认 函数的所在位置，
+	这样在使用的时候，只需要传入函数在内存中位置就可以了，具体执行该函数的时候
+	可以使用下面这个方法招待对应的 funcInfo
+ */
 func findfunc(pc uintptr) funcInfo {
 	datap := findmoduledatap(pc)
 	if datap == nil {

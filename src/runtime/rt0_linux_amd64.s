@@ -6,6 +6,7 @@
 
 // amd64 linux 函数的入口文件
 // _rt0_amd64在runtime/asm_amd64.s
+// wangyang 重要 这里是 linux 函数的入口位置
 TEXT _rt0_amd64_linux(SB),NOSPLIT,$-8
 	JMP	_rt0_amd64(SB)  
 

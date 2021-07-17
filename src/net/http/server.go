@@ -233,6 +233,9 @@ var (
 	LocalAddrContextKey = &contextKey{"local-addr"}
 )
 
+/**
+	这里的连接，通过封装，形成http连接
+ */
 // A conn represents the server side of an HTTP connection.
 type conn struct {
 	// server is the server on which the connection arrived.
@@ -268,7 +271,7 @@ type conn struct {
 	r *connReader
 
 	// bufr reads from r.
-	bufr *bufio.Reader
+	bufr *bufio.Reader //--> 这里使用 bufio.Reader 作为读取
 
 	// bufw writes to checkConnErrorWriter{c}, which populates werr on error.
 	bufw *bufio.Writer
@@ -369,6 +372,9 @@ func (cw *chunkWriter) Write(p []byte) (n int, err error) {
 			return
 		}
 	}
+	/**
+		这里会使用 cw res conn bufw进行 输出 wangyang
+	 */
 	n, err = cw.res.conn.bufw.Write(p)
 	if cw.chunking && err == nil {
 		_, err = cw.res.conn.bufw.Write(crlf)
@@ -629,6 +635,10 @@ type readResult struct {
 // read sizes) with support for selectively keeping an io.Reader.Read
 // call blocked in a background goroutine to wait for activity and
 // trigger a CloseNotifier channel.
+/**
+	connReader指定一个tcp连接
+	这里只是一个 普通的 没有缓冲的Reader
+ */
 type connReader struct {
 	conn *conn
 
@@ -761,7 +771,7 @@ func (cr *connReader) Read(p []byte) (n int, err error) {
 	}
 	cr.inRead = true
 	cr.unlock()
-	n, err = cr.conn.rwc.Read(p)
+	n, err = cr.conn.rwc.Read(p) //这里进行读取
 
 	cr.lock()
 	cr.inRead = false
@@ -941,6 +951,9 @@ func (c *conn) readRequest(ctx context.Context) (w *response, err error) {
 		peek, _ := c.bufr.Peek(4) // ReadRequest will get err below
 		c.bufr.Discard(numLeadingCRorLF(peek))
 	}
+	/**
+		这里会读取 信息形成request
+	 */
 	req, err := readRequest(c.bufr, keepHostHeader)
 	if err != nil {
 		if c.r.hitReadLimit() {
@@ -992,6 +1005,9 @@ func (c *conn) readRequest(ctx context.Context) (w *response, err error) {
 		c.rwc.SetReadDeadline(wholeReqDeadline)
 	}
 
+	/**
+		这里形成一个 response 对象
+	 */
 	w = &response{
 		conn:          c,
 		cancelCtx:     cancelCtx,
@@ -1539,6 +1555,9 @@ func (w *response) finishRequest() {
 		w.WriteHeader(StatusOK)
 	}
 
+	/**
+		这里面 会对数据进行flush
+	 */
 	w.w.Flush()
 	putBufioWriter(w.w)
 	w.cw.close()
@@ -1716,6 +1735,9 @@ func isCommonNetReadError(err error) bool {
 }
 
 // Serve a new connection.
+/**
+	这个方法在一个单独的协程里面执行
+ */
 func (c *conn) serve(ctx context.Context) {
 	c.remoteAddr = c.rwc.RemoteAddr().String()
 	ctx = context.WithValue(ctx, LocalAddrContextKey, c.rwc.LocalAddr())
@@ -1732,6 +1754,9 @@ func (c *conn) serve(ctx context.Context) {
 		}
 	}()
 
+	/**
+		这里转化成 tls conn,设置相应的read deadline
+	 */
 	if tlsConn, ok := c.rwc.(*tls.Conn); ok {
 		if d := c.server.ReadTimeout; d != 0 {
 			c.rwc.SetReadDeadline(time.Now().Add(d))
@@ -1760,12 +1785,20 @@ func (c *conn) serve(ctx context.Context) {
 	c.cancelCtx = cancelCtx
 	defer cancelCtx()
 
+	//c 是一个普通的网络连接
 	c.r = &connReader{conn: c}
+	/**
+		这里会使用 这条conn 对应的 connReader生成对应的
+		reader与writer
+	 */
 	c.bufr = newBufioReader(c.r)
 	c.bufw = newBufioWriterSize(checkConnErrorWriter{c}, 4<<10)
 
+	/**
+		这里是 http 包的 server端
+	 */
 	for {
-		w, err := c.readRequest(ctx)
+		w, err := c.readRequest(ctx) //不断的轮询读取request
 		if c.r.remain != c.server.initialReadLimitSize() {
 			// If we read any bytes off the wire, we're active.
 			c.setState(c.rwc, StateActive)
@@ -1827,12 +1860,12 @@ func (c *conn) serve(ctx context.Context) {
 		// in parallel even if their responses need to be serialized.
 		// But we're not going to implement HTTP pipelining because it
 		// was never deployed in the wild and the answer is HTTP/2.
-		serverHandler{c.server}.ServeHTTP(w, w.req)
+		serverHandler{c.server}.ServeHTTP(w, w.req) //--> 这里进行相应的http 进行处理
 		w.cancelCtx()
 		if c.hijacked() {
 			return
 		}
-		w.finishRequest()
+		w.finishRequest() //--> 这里会完成相应的request 将相应的信息flush 到客户端
 		if !w.shouldReuseConnection() {
 			if w.requestBodyLimitHit || w.closedRequestBodyEarly() {
 				c.closeWriteAndWait()
@@ -1842,6 +1875,10 @@ func (c *conn) serve(ctx context.Context) {
 		c.setState(c.rwc, StateIdle)
 		c.curReq.Store((*response)(nil))
 
+		/**
+			如果这里不是keep alive 那么就会直接返回
+			wangyang
+		 */
 		if !w.conn.server.doKeepAlives() {
 			// We're in shutdown mode. We might've replied
 			// to the user without "Connection: close" and
@@ -1850,7 +1887,10 @@ func (c *conn) serve(ctx context.Context) {
 			return
 		}
 
-		if d := c.server.idleTimeout(); d != 0 {
+		/**
+			如果空闲检测超时 那么直接返回
+		 */
+		if d := c.server.idleTimeout(); d != 0 { //--> 如果 idle 超时不为空，这里会进行超时检测
 			c.rwc.SetReadDeadline(time.Now().Add(d))
 			if _, err := c.bufr.Peek(4); err != nil {
 				return
@@ -2334,6 +2374,9 @@ func (mux *ServeMux) ServeHTTP(w ResponseWriter, r *Request) {
 		return
 	}
 	h, _ := mux.Handler(r)
+	/**
+		这里会是一个 阻塞的方法 会一直阻塞到相应的处理结束
+	 */
 	h.ServeHTTP(w, r)
 }
 
@@ -2683,6 +2726,10 @@ type serverHandler struct {
 	srv *Server
 }
 
+/**
+	这里在处理 http的时候会判断handler ,如果这里的handler 为空
+	那么会使用 DefaultServeMux 作为默认的处理handler
+ */
 func (sh serverHandler) ServeHTTP(rw ResponseWriter, req *Request) {
 	handler := sh.srv.Handler
 	if handler == nil {
@@ -2792,7 +2839,10 @@ func (srv *Server) Serve(l net.Listener) error {
 		tempDelay = 0
 		c := srv.newConn(rw)
 		c.setState(c.rwc, StateNew) // before Serve can return
-		go c.serve(ctx)
+		/**
+			每一个连接 都会 使用协程进行处理
+		 */
+		go c.serve(ctx) //-->
 	}
 }
 
@@ -3310,7 +3360,7 @@ type checkConnErrorWriter struct {
 }
 
 func (w checkConnErrorWriter) Write(p []byte) (n int, err error) {
-	n, err = w.c.rwc.Write(p)
+	n, err = w.c.rwc.Write(p) //这里使用 conn进行write操作
 	if err != nil && w.c.werr == nil {
 		w.c.werr = err
 		w.c.cancelCtx()

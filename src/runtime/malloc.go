@@ -138,7 +138,7 @@ const (
 	concurrentSweep = _ConcurrentSweep
 
 	// glang内存页的大小，8K
-	_PageSize = 1 << _PageShift
+	_PageSize = 1 << _PageShift //--> pageShift 是13
 	_PageMask = _PageSize - 1
 
 	// _64bit = 1 on 64-bit systems, 0 on 32-bit systems
@@ -180,6 +180,13 @@ const (
 	// On Darwin/arm64, we cannot reserve more than ~5GB of virtual memory,
 	// but as most devices have less than 4GB of physical memory anyway, we
 	// try to be conservative here, and only ask for a 2GB heap.
+	/**
+wangyang		const GoarchAmd64 = 1 这里的这些数值 是跟随不同的操作系统获取的
+		这几个系统值 amd64 下只有 GoarchAmd64 是1
+	_64bit 是 1
+
+		这里的数值是 39
+	 */
 	_MHeapMap_TotalBits = (_64bit*sys.GoosWindows)*35 + (_64bit*(1-sys.GoosWindows)*(1-sys.GoosDarwin*sys.GoarchArm64))*39 + sys.GoosDarwin*sys.GoarchArm64*31 + (1-_64bit)*(32-(sys.GoarchMips+sys.GoarchMipsle))
 	_MHeapMap_Bits      = _MHeapMap_TotalBits - _PageShift
 
@@ -187,6 +194,7 @@ const (
 	//
 	// On 32-bit, this is also the maximum heap pointer value,
 	// since the arena starts at address 0.
+	//这里获取最大的内存 是 512 -1
 	_MaxMem = 1<<_MHeapMap_TotalBits - 1
 
 	// Max number of threads to run garbage collection.
@@ -319,6 +327,7 @@ func mallocinit() {
 	// _MaxMem在linux x64下是512g-1，spanSize=512G/8k * 8=512M
 	// 计算span大小
 	// The spans array holds one *mspan per _PageSize of arena.
+	// 公式为 512GB / 8kB * 8 = 512Mb 这里 刚好除以 2 的10次方
 	var spansSize uintptr = (_MaxMem + 1) / _PageSize * sys.PtrSize
 	spansSize = round(spansSize, _PageSize)
 	// The bitmap holds 2 bits per word of arena.
@@ -354,6 +363,7 @@ func mallocinit() {
 		//
 		// Actually we reserve 544 GB (because the bitmap ends up being 32 GB)
 		// but it hardly matters: e0 00 is not valid UTF-8 either.
+		//
 		//
 		// If this fails we fall back to the 32 bit memory mechanism
 		//
@@ -729,6 +739,10 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 // 4. 如果 span.freelist 为空，从 central 获取新的 span
 // 5. 如果 central.nonempty 为空，从 heap.free/freelarge 获取，并切分成 object 链。
 // 6. 如 heap 没有大小合适闲置的 span，向操作系统申请新的内存
+
+/**
+	wangyang 这里的目的是 从合适的位置分配对应的内存
+ */
 func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	// 如果是 _GCmarktermination 阶段，那么抛出异常
 	if gcphase == _GCmarktermination {

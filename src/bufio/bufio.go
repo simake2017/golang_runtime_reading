@@ -28,6 +28,10 @@ var (
 // Buffered input.
 
 // Reader implements buffering for an io.Reader object.
+
+/**
+	这里是 带缓冲的 reader
+ */
 type Reader struct {
 	buf          []byte
 	rd           io.Reader // reader provided by the client
@@ -97,6 +101,9 @@ func (b *Reader) fill() {
 
 	// Read new data: try a limited number of times.
 	for i := maxConsecutiveEmptyReads; i > 0; i-- {
+		/**
+			这里会调用真正的 fd 进行读取
+		 */
 		n, err := b.rd.Read(b.buf[b.w:])
 		if n < 0 {
 			panic(errNegativeRead)
@@ -128,6 +135,10 @@ func (b *Reader) Peek(n int) ([]byte, error) {
 		return nil, ErrNegativeCount
 	}
 
+	/**
+		这里会进行判断 如果 w -r 小于 相应的peek数量 ，并且小于长度
+		那么会进行相应的复制
+	 */
 	for b.w-b.r < n && b.w-b.r < len(b.buf) && b.err == nil {
 		b.fill() // b.w-b.r < len(b.buf) => buffer is not full
 	}
@@ -146,6 +157,9 @@ func (b *Reader) Peek(n int) ([]byte, error) {
 			err = ErrBufferFull
 		}
 	}
+	/**
+		从这里面 读取相应的字节数量 但是r 的位置没有相应的增加
+	 */
 	return b.buf[b.r : b.r+n], err
 }
 
@@ -213,7 +227,7 @@ func (b *Reader) Read(p []byte) (n int, err error) {
 		// Do not use b.fill, which will loop.
 		b.r = 0
 		b.w = 0
-		n, b.err = b.rd.Read(b.buf)
+		n, b.err = b.rd.Read(b.buf) // --> 这里读入到 缓冲 buf中
 		if n < 0 {
 			panic(errNegativeRead)
 		}
@@ -224,7 +238,7 @@ func (b *Reader) Read(p []byte) (n int, err error) {
 	}
 
 	// copy as much as we can
-	n = copy(p, b.buf[b.r:b.w])
+	n = copy(p, b.buf[b.r:b.w]) //这里进行拷贝
 	b.r += n
 	b.lastByte = int(b.buf[b.r-1])
 	b.lastRuneSize = -1
@@ -597,6 +611,9 @@ func (b *Writer) Buffered() int { return b.n }
 // If nn < len(p), it also returns an error explaining
 // why the write is short.
 func (b *Writer) Write(p []byte) (nn int, err error) {
+	/**
+		如果len 小于可用长度
+	 */
 	for len(p) > b.Available() && b.err == nil {
 		var n int
 		if b.Buffered() == 0 {

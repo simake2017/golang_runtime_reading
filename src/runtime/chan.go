@@ -23,8 +23,15 @@ import (
 )
 
 const (
-	maxAlign = 8
+	maxAlign = 8 //最大对齐
 	// hchan 结构体占用的内存大小
+	/**
+		加上一块 让内存对齐到8
+
+		这里可以举一个例子 ，比如  00 0011 ==> 3 ，3的负数，-3 == 11 1101 ==> 相应的补数
+		这里然后& 7 (1111)，那么就可以获得相应的 部分，也就是 1101 然后跟3 相加就是16
+		所以说通过这个方式可以获取 补数的部分(对齐到某个数值)
+	 */
 	hchanSize = unsafe.Sizeof(hchan{}) + uintptr(-int(unsafe.Sizeof(hchan{}))&(maxAlign-1))
 	debugChan = false
 )
@@ -124,7 +131,9 @@ func makechan(t *chantype, size int) *hchan {
 		// Elements do not contain pointers.
 		// Allocate hchan and buf in one call.
 		// 元素没包含指针，一次性申请 hchan 和 channel 元素占用的内存
+		//wangyang 一次性申请对应的内存大小，
 		c = (*hchan)(mallocgc(hchanSize+uintptr(size)*elem.size, nil, true))
+		//wangyang 这里是buf 指针的位置
 		c.buf = add(unsafe.Pointer(c), hchanSize)
 	default:
 		// Elements contain pointers.
@@ -144,6 +153,9 @@ func makechan(t *chantype, size int) *hchan {
 }
 
 // chanbuf(c, i) is pointer to the i'th slot in the buffer.
+/**
+	buf 对应指针的位置，然后 elemsize * 索引
+ */
 func chanbuf(c *hchan, i uint) unsafe.Pointer {
 	return add(c.buf, uintptr(i)*uintptr(c.elemsize))
 }
@@ -171,6 +183,9 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
 // 有 goroutine 阻塞在 channel 上，此时 hchan.buf 为空：直接将数据发送给该 goroutine。
 // 当前 hchan.buf 还有可用空间：将数据放到 buffer 里面。
 // 当前 hchan.buf 已满：阻塞当前 goroutine。
+/**
+	这里可以立即得到 是否写入成功的 返回值
+ */
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	// 如果向一个nil channel发送数据
 	if c == nil {
@@ -224,6 +239,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		panic(plainError("send on closed channel"))
 	}
 
+	/**
+		如果 recvq 能够出队 那么直接获取一个 发送到 recvq里面去
+	 */
 	if sg := c.recvq.dequeue(); sg != nil {
 		// Found a waiting receiver. We pass the value we want to send
 		// directly to the receiver, bypassing the channel buffer (if any).
@@ -233,6 +251,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 
 	if c.qcount < c.dataqsiz {
 		// Space is available in the channel buffer. Enqueue the element to send.
+		/**
+			这里面会往 buf 里面写入对象，用指针的方式
+		 */
 		qp := chanbuf(c, c.sendx)
 		if raceenabled {
 			raceacquire(qp)

@@ -319,6 +319,13 @@ type nameOff int32
 type typeOff int32
 type textOff int32
 
+/**
+	这里用于描述一个 method
+name nameOff  name of method
+	mtyp typeOff  method type (without receiver)
+	ifn  textOff  fn used in interface call (one-word receiver)
+	tfn  textOff  fn used for normal method call
+ */
 type method struct {
 	name nameOff
 	mtyp typeOff
@@ -374,11 +381,19 @@ type chantype struct {
 	dir  uintptr
 }
 
+/**
+	切片类型 用结构体实现
+
+ */
 type slicetype struct {
-	typ  _type
-	elem *_type
+	typ  _type // typ 是结构体
+	elem *_type //elem 是指针
 }
 
+/**
+wangyang 重要 funcType标识一个函数类型，所谓函数类型是由 入参和出参决定的
+与函数名称无关
+ */
 type functype struct {
 	typ      _type
 	inCount  uint16
@@ -400,6 +415,12 @@ func (f *structfield) offset() uintptr {
 	return f.offsetAnon >> 1
 }
 
+/**
+
+	wangyang 用于描述一个 结构体类型
+	比如任何一个结构体 student,他的类型都是下面这个结构体的一个实例对象
+
+ */
 type structtype struct {
 	typ     _type
 	pkgPath name

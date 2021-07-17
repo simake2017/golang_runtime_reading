@@ -56,7 +56,7 @@ type Response struct {
 	//
 	// The http Client and Transport guarantee that Body is always
 	// non-nil, even on responses without a body or responses with
-	// a zero-length body. It is the caller's responsibility to
+	// a zero-length body. it is the caller's responsibility to
 	// close Body. The default HTTP client's Transport may not
 	// reuse HTTP/1.x "keep-alive" TCP connections if the Body is
 	// not read to completion and closed.
@@ -151,8 +151,8 @@ func ReadResponse(r *bufio.Reader, req *Request) (*Response, error) {
 		Request: req,
 	}
 
-	// Parse the first line of the response.
-	line, err := tp.ReadLine()
+	// Parse the first line of the response
+	line, err := tp.ReadLine() //--> 这里面会根据 回车换行符号 读出一行
 	if err != nil {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF

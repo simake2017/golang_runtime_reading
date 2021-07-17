@@ -176,6 +176,9 @@ func poll_runtime_pollReset(pd *pollDesc, mode int) int {
 }
 
 //go:linkname poll_runtime_pollWait internal/poll.runtime_pollWait
+/**
+	这里会真正进行阻塞 ，直到 阻塞到有read 事件可以读取为止
+ */
 func poll_runtime_pollWait(pd *pollDesc, mode int) int {
 	err := netpollcheckerr(pd, int32(mode))
 	if err != 0 {

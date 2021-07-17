@@ -504,7 +504,10 @@ func readTransfer(msg interface{}, r *bufio.Reader) (err error) {
 		}
 	case realLength == 0:
 		t.Body = NoBody
-	case realLength > 0:
+	case realLength > 0://--> 判断实际长度大于0 的时候会产生一个body
+		/**
+			会使用 相应的 r 作为 body
+		 */
 		t.Body = &body{src: io.LimitReader(r, realLength), closing: t.Close}
 	default:
 		// realLength < 0, i.e. "Content-Length" not mentioned in header
@@ -741,6 +744,9 @@ func fixTrailer(header Header, te []string) (Header, error) {
 // body turns a Reader into a ReadCloser.
 // Close ensures that the body has been fully read
 // and then reads the trailer if necessary.
+/**
+	这里作为 http response的 body对象
+ */
 type body struct {
 	src          io.Reader
 	hdr          interface{}   // non-nil (Response or Request) value means read trailer

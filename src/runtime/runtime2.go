@@ -142,11 +142,28 @@ type note struct {
 	key uintptr
 }
 
+/**
+	wangyang 函数结构体内容 ，每个函数由该结构体来实现
+	*******
+	golang 的类型是依赖于 类型推断，Java中的类型是包含在具体对象中的，在header 里面通过 metadata 指向对应的类型对象Class 实例
+	golang 也比较类似，比如所有的函数 的kind 是 func ，都是由funcval结构体来描述的，funcval 里面的fn指向可以用来获取一个
+	具体的函数信息 包含在 funcInfo 中 , 函数的类型 会由funcType来描述，
+
+	举例来说，比如一个 函数或者一个 结构体 type student struct{} ，student 可能有很多，而且内存布局都一样，
+	但是他们都有一个共同的 structtype 也就是 对象实例 来描述这个类型 ,
+	slice func 包括 interface 等等都是一样的，但是他们跟Java区别的地方在于 他的实例对象中不包含 metadata指针
+	而是在编译期确认的，所以不能像Java这种 将一个子类型 struct 转为父类型 struct
+
+
+ */
 type funcval struct {
 	fn uintptr
 	// variable-size, fn-specific data here
 }
 
+/**
+	wangyang iface
+ */
 type iface struct {
 	tab  *itab
 	data unsafe.Pointer
@@ -281,13 +298,13 @@ type gobuf struct {
 	// and restores it doesn't need write barriers. It's still
 	// typed as a pointer so that any other writes from Go get
 	// write barriers.
-	sp   uintptr
-	pc   uintptr
-	g    guintptr
+	sp   uintptr //记录cpu rsp寄存器的值
+	pc   uintptr //记录cpu rip寄存器的值
+	g    guintptr //记录对应 goroutine结构体的指针  对应着  之前调度的g 结构体指针
 	ctxt unsafe.Pointer
-	ret  sys.Uintreg
+	ret  sys.Uintreg //记录对应系统调用的返回值
 	lr   uintptr
-	bp   uintptr // for GOEXPERIMENT=framepointer
+	bp   uintptr // for GOEXPERIMENT=framepointer //-->记录对应的bp 栈帧栈底指针
 }
 
 // sudog represents a g in a wait list, such as for sending/receiving
@@ -356,9 +373,12 @@ type wincallbackcontext struct {
 // The bounds of the stack are exactly [lo, hi),
 // with no implicit data structures on either side.
 // stack 描述了Go执行堆栈。堆栈的边界正好是 [lo,hi)，两边都没有隐式数据结构。
+/**
+	用于描述 栈的数据结构
+ */
 type stack struct {
-	lo uintptr
-	hi uintptr
+	lo uintptr 	//-->low 低地址指向栈顶
+	hi uintptr 	//--> high 高地址 指向栈底
 }
 
 type g struct {
@@ -370,15 +390,21 @@ type g struct {
 	// It is stack.lo+StackGuard on g0 and gsignal stacks.
 	// It is ~0 on other goroutine stacks, to trigger a call to morestackc (and crash).
 	// 简单数据结构，lo 和 hi 成员描述了栈的下界和上界内存地址
-	stack       stack   // offset known to runtime/cgo
+	stack       stack   // offset known to runtime/cgo -->记录该goroutine使用的栈
+	// 下面两个成员用于栈溢出检查，实现栈的自动伸缩，抢占调度也会用到stackguard0
 	stackguard0 uintptr // offset known to liblink
 	stackguard1 uintptr // offset known to liblink
 
 	_panic *_panic // innermost panic - offset known to liblink
 	_defer *_defer // innermost defer
-	// 当前的m
+	// 当前的m --> 当前对应的m 被哪个工作线程执行
 	m *m // current m; offset known to arm liblink
-	// goroutine切换时，用于保存g的上下文
+	// goroutine切换时，用于保存g的上下文 -->这里对应的类型是gobuf，保存的是
+	//相应的寄存器 也就是 上下文的值
+	/**
+		wangyang @@@@ 也就是说，当前的这个g是从哪个 g的什么位置切换到当前
+		的g 的
+	 */
 	sched     gobuf
 	syscallsp uintptr // if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc uintptr // if status==Gsyscall, syscallpc = sched.pc to use during gc
@@ -392,8 +418,18 @@ type g struct {
 	// g被阻塞的大体时间
 	waitsince  int64  // approx time when the g become blocked
 	waitreason string // if status==Gwaiting
+	// schedlink字段指向全局运行队列中的下一个g，
+	//所有位于全局运行队列中的g形成一个链表
+	/**
+		如果当前goroutine位于全局队列，则该字段指向队列中下一个goroutine
+
+		因为有的goroutine是从全局队列中获取的，这种情况下，如果这个goroutine被p给捕获了
+		那么这个goroutine就会加入到p的gfree中去，但是这个字段仍然需要去指向全局队列中的
+		goroutine, 方便窃取
+	 */
 	schedlink  guintptr
 	// 标记是否可抢占
+	// 抢占调度标志，如果需要抢占调度，设置preempt为true
 	preempt        bool     // preemption signal, duplicates stackguard0 = stackpreempt
 	paniconfault   bool     // panic (instead of crash) on unexpected fault address
 	preemptscan    bool     // preempted g does scan for gc
@@ -435,8 +471,18 @@ type g struct {
 	gcAssistBytes int64
 }
 
+/**
+
+	这里猜测是这样的 每个 goroutine 的创建也是在栈区，创建的时候每个栈的初始大小是2k
+	在进行切换的时候 会不断进行切换，每条goroutine 会关联一条thread ，可以获取相应的
+	thread的tls，相应的g0栈的位置保存在 tls里面，在切换的时候通过g0栈执行筛选切换逻辑
+	然后跳转到另一个栈，然后进行切换，当栈溢出的时候，使用的技术是整栈复制
+
+ */
 type m struct {
-	// 用来执行调度指令的 goroutine
+	// 用来执行调度指令的 goroutine ,m中自己的代码，用来调度属于m的goroutine，该部分代码通常在sysstack 执行
+	// g0主要用来记录工作线程使用的栈信息，在执行调度代码时需要使用这个栈
+	// 执行用户goroutine代码时，使用用户goroutine自己的栈，调度时会发生栈的切换
 	g0      *g     // goroutine with scheduling stack
 	morebuf gobuf  // gobuf arg to morestack
 	divmod  uint32 // div/mod denominator for arm - known to liblink
@@ -448,9 +494,10 @@ type m struct {
 	goSigStack gsignalStack // Go-allocated signal handling stack
 	sigmask    sigset       // storage for saved signal mask
 	// thread-local storage
+	//--> 这里是 线程局部存储 对应到当前线程
 	tls      [6]uintptr // thread-local storage (for x86 extern register)
 	mstartfn func()
-	// 当前运行的goroutine
+	// 当前运行的goroutine --> 当前正在运行中的user goroutine
 	curg      *g       // current running goroutine
 	caughtsig guintptr // goroutine running during fatal signal
 	// 关联p和执行的go代码
@@ -468,8 +515,12 @@ type m struct {
 	profilehz int32
 	helpgc    int32
 	// 是否自旋，自旋就表示M正在找G来运行
+	/**
+		从其他地方寻找 goroutine , 这就是类似fork join的原理
+	 */
+	// spinning状态：表示当前工作线程正在试图从其它工作线程的本地运行队列偷取goroutine
 	spinning bool // m is out of work and is actively looking for work
-	// m是否被阻塞
+	// m是否被阻塞 --> 比如阻塞在系统调用
 	blocked bool // m is blocked on a note
 	// m是否在执行写屏蔽
 	inwb        bool // m is executing a write barrier
@@ -487,8 +538,17 @@ type m struct {
 	ncgo          int32       // number of cgo calls currently in progress
 	cgoCallersUse uint32      // if non-zero, cgoCallers in use temporarily
 	cgoCallers    *cgoCallers // cgo traceback if crashing in cgo call
+	// 没有goroutine需要运行时，工作线程睡眠在这个park成员上，
+	// 其它线程通过这个park唤醒该工作线程
+	/**
+		线程 休眠技术，类似Java线程的 unsafe.park与unsafe.unpark 等等
+	 */
 	park          note
 	// 用于链接allm
+	// 记录所有工作线程的一个链表
+	/**
+		所有的工作线程 形成一个链表  通过这个来记录
+	 */
 	alllink   *m // on allm
 	schedlink muintptr
 	// 当前m的内存缓存
@@ -511,6 +571,9 @@ type m struct {
 	waittraceskip int
 	startingtrace bool
 	syscalltick   uint32
+	/**
+		linux 系统下，该值对应线程的id
+	 */
 	thread        uintptr // thread handle
 	freelink      *m      // on sched.freem
 
@@ -525,6 +588,13 @@ type m struct {
 	mOS
 }
 
+/**
+	p结构体用于保存工作线程执行go代码时所必需的资源，比如goroutine的运行队列，内存分配用到的缓存等等
+
+	每个m 会关联一个p ，g队列都是跟m绑定的， 最早的版本是没有p的，g队列挂在m上面，但是当执行阻塞系统调用时
+	所有的g都会等待，所以才有了p，m在调度的时候，从p上寻找相应的g
+
+ */
 type p struct {
 	lock mutex
 
@@ -553,6 +623,7 @@ type p struct {
 
 	// Queue of runnable goroutines. Accessed without lock.
 	// 可运行的goroutine的队列
+	//本地goroutine运行队列 头部
 	runqhead uint32
 	runqtail uint32
 	runq     [256]guintptr
@@ -569,6 +640,9 @@ type p struct {
 	runnext guintptr
 
 	// Available G's (status == Gdead)
+	/**
+		用于记录已经退出的空闲的 g（状态为status ==Gdead）
+	 */
 	gfree    *g
 	gfreecnt int32
 
@@ -612,6 +686,27 @@ type p struct {
 	pad [sys.CacheLineSize]byte
 }
 
+/**
+重要全局变量
+allgs     []*g     // 保存所有的g
+allm       *m    // 所有的m构成的一个链表，包括下面的m0
+allp       []*p    // 保存所有的p，len(allp) == gomaxprocs
+
+ncpu             int32   // 系统中cpu核的数量，程序启动时由runtime代码初始化
+gomaxprocs int32   // p的最大值，默认等于ncpu，但可以通过GOMAXPROCS修改
+
+sched      schedt     // 调度器结构体对象，记录了调度器的工作状态
+
+m0  m       // 代表进程的主线程
+g0   g        // m0的g0，也就是m0.g0 = &g0
+ */
+
+/**
+	schedt结构体用来保存调度器的状态信息和goroutine的全局运行队列：
+
+	用于保存全局运行队列
+
+ */
 type schedt struct {
 	// accessed atomically. keep at top to ensure alignment on 32-bit systems.
 	goidgen  uint64
@@ -622,8 +717,9 @@ type schedt struct {
 	// When increasing nmidle, nmidlelocked, nmsys, or nmfreed, be
 	// sure to call checkdead().
 	// idle状态的m
+	// 由空闲的工作线程组成链表 都是链表形式的 结构
 	midle muintptr // idle m's waiting for work
-	// idle状态的m个数
+	// idle状态的m个数 --> 空闲工作线程的数量
 	nmidle int32 // number of idle m's waiting for work
 	// lockde状态的m个数
 	nmidlelocked int32 // number of locked m's waiting for work
@@ -637,6 +733,7 @@ type schedt struct {
 	ngsys uint32 // number of system goroutines; updated atomically
 
 	// idle的p列表
+	// 由空闲的p结构体对象组成的链表 --> 同样是链表结构
 	pidle puintptr // idle p's
 	// 有多少个状态为idle的p
 	npidle uint32
@@ -645,8 +742,8 @@ type schedt struct {
 
 	// Global runnable queue.
 	// 全局的可运行的g队列
-	runqhead guintptr
-	runqtail guintptr
+	runqhead guintptr // --> 头
+	runqtail guintptr //--> 尾部
 	// 全局队列的大小
 	runqsize int32
 
@@ -705,6 +802,9 @@ const (
 // See https://golang.org/s/go12symtab.
 // Keep in sync with linker (../cmd/link/internal/ld/pcln.go:/pclntab)
 // and with package debug/gosym and with symtab.go in package runtime.
+/**
+wangyang 重要 函数内存布局，在 funcInfo 中使用
+ */
 type _func struct {
 	entry   uintptr // start pc
 	nameoff int32   // function name

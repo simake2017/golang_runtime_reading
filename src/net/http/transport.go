@@ -39,6 +39,9 @@ import (
 // $no_proxy) environment variables.
 var DefaultTransport RoundTripper = &Transport{
 	Proxy: ProxyFromEnvironment,
+	/**
+	这里创建出来的 是 net 长连接
+	 */
 	DialContext: (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,
@@ -104,11 +107,18 @@ type Transport struct {
 	// "http" is assumed.
 	//
 	// If Proxy is nil or returns a nil *URL, no proxy is used.
+	/**
+	这里用于设置代理，如果设置了代码，那么这个请求就会给代理服务器
+	通过http_proxy 来进行设置
+	 */
 	Proxy func(*Request) (*url.URL, error)
 
 	// DialContext specifies the dial function for creating unencrypted TCP connections.
 	// If DialContext is nil (and the deprecated Dial below is also nil),
 	// then the transport dials using package net.
+	/**
+	一个拨号函数 用于返回一个 未加密的连接
+	 */
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	// Dial specifies the dial function for creating unencrypted TCP connections.
@@ -272,6 +282,9 @@ func (t *Transport) onceSetNextProtoDefaults() {
 //
 // As a special case, if req.URL.Host is "localhost" (with or without
 // a port number), then a nil URL and nil error will be returned.
+/**
+这里可以直接将 ProxyFromEnvironment 作为参数传递给某个结构体
+ */
 func ProxyFromEnvironment(req *Request) (*url.URL, error) {
 	var proxy string
 	if req.URL.Scheme == "https" {
@@ -746,7 +759,7 @@ func (t *Transport) tryPutIdleConn(pconn *persistConn) error {
 			log.Fatalf("dup idle pconn %p in freelist", pconn)
 		}
 	}
-	t.idleConn[key] = append(idles, pconn)
+	t.idleConn[key] = append(idles, pconn) //--> 在这里进行相应的 生成连接的存放
 	t.idleLRU.add(pconn)
 	if t.MaxIdleConns != 0 && t.idleLRU.len() > t.MaxIdleConns {
 		oldest := t.idleLRU.removeOldest()
@@ -953,7 +966,14 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 	cancelc := make(chan error, 1)
 	t.setReqCanceler(req, func(err error) { cancelc <- err })
 
+	/**
+		这里的这种写作手法 可以去学习 ，这里面去调用一个 go 协程
+		然后通过channel 去耦合，下面这里使用select 进行阻塞
+	 */
 	go func() {
+		/**
+
+		 */
 		pc, err := t.dialConn(ctx, cm)
 		dialc <- dialRes{pc, err}
 	}()
@@ -966,7 +986,7 @@ func (t *Transport) getConn(treq *transportRequest, cm connectMethod) (*persistC
 			if trace != nil && trace.GotConn != nil && v.pc.alt == nil {
 				trace.GotConn(httptrace.GotConnInfo{Conn: v.pc.conn})
 			}
-			return v.pc, nil
+			return v.pc, nil //--> 这里会将 pconn返回
 		}
 		// Our dial failed. See why to return a nicer error
 		// value.
@@ -1608,12 +1628,15 @@ func (pc *persistConn) readLoop() {
 		}
 		pc.mu.Unlock()
 
+		/**
+			会在这里一直 阻塞到 读取相应的req
+		 */
 		rc := <-pc.reqch
 		trace := httptrace.ContextClientTrace(rc.req.Context())
 
 		var resp *Response
 		if err == nil {
-			resp, err = pc.readResponse(rc, trace)
+			resp, err = pc.readResponse(rc, trace) //--> 这里会持续的读取 response
 		} else {
 			err = transportReadFromServerError{err}
 			closeErr = err
@@ -1675,13 +1698,16 @@ func (pc *persistConn) readLoop() {
 
 		waitForBodyRead := make(chan bool, 2)
 		body := &bodyEOFSignal{
-			body: resp.Body,
+			body: resp.Body, //--> 这里最终使用的 reader 是 bufio.Reader
 			earlyCloseFn: func() error {
 				waitForBodyRead <- false
 				<-eofc // will be closed by deferred call at the end of the function
 				return nil
 
 			},
+			/**
+				当全部读取完成，读取到 eof 的时候，会在这里进行处理
+			 */
 			fn: func(err error) error {
 				isEOF := err == io.EOF
 				waitForBodyRead <- isEOF
@@ -1706,7 +1732,10 @@ func (pc *persistConn) readLoop() {
 		}
 
 		select {
-		case rc.ch <- responseAndError{res: resp}:
+		/**
+				将相应的 response 放入到 request 对象的相应的rc chan 当中
+		 */
+		case rc.ch <- responseAndError{res: resp}: //--> 这里将response 对象写入到chan当中
 		case <-rc.callerGone:
 			return
 		}
@@ -1721,7 +1750,7 @@ func (pc *persistConn) readLoop() {
 				bodyEOF &&
 				!pc.sawEOF &&
 				pc.wroteRequest() &&
-				tryPutIdleConn(trace)
+				tryPutIdleConn(trace) //--> 这里读取到eof 的时候 会放入到 空闲连接，否则 不能被其他协程使用
 			if bodyEOF {
 				eofc <- struct{}{}
 			}
@@ -2058,6 +2087,9 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 			}
 			pc.close(errTimeout)
 			return nil, errTimeout
+			/**
+				在这里接收相应 response
+			 */
 		case re := <-resc:
 			if (re.res == nil) == (re.err == nil) {
 				panic(fmt.Sprintf("internal error: exactly one of res or err should be set; nil=%v", re.res == nil))

@@ -22,6 +22,26 @@ func add(p unsafe.Pointer, x uintptr) unsafe.Pointer {
 // 要获取当前用户g，请使用`getg().m.curg`。
 // `getg()`单独返回当前g，但是当在系统或信号堆栈上执行时，这将分别返回当前M的“g0”或“gsignal”。这通常不是你想要的。
 // 要确定您是在用户堆栈还是系统堆栈上运行，请使用`getg() == getg().m.curg`。
+/**
+	这里说的比较明确了，这个函数由编译器生成相应的指令
+	获取的是当前的g 也就是m.curg,要明确是在系统栈还是用户栈，系统栈中获取的就是g0
+
+从注释里可以看到，这个函数并不是在 runtime 里实现的，而是由编译器负责写入函数体。而且写明了是来自于 TLS（Thread-local Storage）或者指定的寄存器的。
+然后在编译器中搜索 getg 相关的内容，可以在 ssa.go 中发现与之相关的说明
+
+case ssa.OpAMD64LoweredGetG:
+	r := v.Reg()
+	// See the comments in cmd/internal/obj/x86/obj6.go
+	// near CanUse1InsnTLS for a detailed explanation of these instructions.
+	if x86.CanUse1InsnTLS(gc.Ctxt) {
+		// MOVQ (TLS), r
+		...
+	} else {
+		// MOVQ TLS, r
+		// MOVQ (r)(TLS*1), r
+		...
+	}
+ */
 func getg() *g
 
 // mcall switches from the g to the g0 stack and invokes fn(g),
@@ -82,6 +102,10 @@ func mcall(fn func(*g))
 // 所以它只能用于简短自足的运作。
 
 // 调用systemstack就是切换到系统线程的堆栈来运行fn，结束后切换回go函数堆栈。
+/**
+runtime 在做调度工作或者和当前 Goroutine 无关的任务时，Golang 会切换调用栈来进行相关的任务，就好像 Linux 的进程进入系统调用时会切换到内核态的调用栈一样，这么做也是为了避免影响到调度以及垃圾回收的扫描。
+	这个函数的目的是为了 执行和当前goroutine无关的任务，比如调度，gc等
+ */
 func systemstack(fn func())
 
 func badsystemstack() {

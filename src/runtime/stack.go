@@ -231,6 +231,10 @@ func stackpoolalloc(order uint8) gclinkptr {
 	list := &stackpool[order]
 	s := list.first
 	if s == nil {
+		/**
+			在没有空栈的情况下，从mheap中 重新获取一个，上午分析的还是有点问题
+			，goroutine的栈不是在os的栈区 而是在heap区域
+		 */
 		// no free stacks. Allocate another span worth.
 		s = mheap_.allocManual(_StackCacheSize>>_PageShift, &memstats.stacks_inuse)
 		if s == nil {
@@ -424,6 +428,9 @@ func stackalloc(n uint32) stack {
 			unlock(&stackpoolmu)
 		} else {
 			// 尝试从本地栈缓存中得到内存
+			/**
+				栈也可以从本地缓存 获取
+			 */
 			x = c.stackcache[order].list
 			if x.ptr() == nil {
 				stackcacherefill(c, order)
@@ -997,13 +1004,16 @@ func copystack(gp *g, newsize uintptr, sync bool) {
 	stackfree(old)
 }
 
+/**
+	四舍五入获取一个 大于这个数的2的幂次方
+ */
 // round x up to a power of 2.
 func round2(x int32) int32 {
 	s := uint(0)
-	for 1<<s < x {
+	for 1<<s < x { //--> 这里是将s 左移1位 ，如果小于x , ++ ,直到一个小于x的整数
 		s++
 	}
-	return 1 << s
+	return 1 << s //-->然后在左移1位
 }
 
 // Called from runtime·morestack when more stack is needed.

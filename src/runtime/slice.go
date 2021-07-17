@@ -8,6 +8,9 @@ import (
 	"unsafe"
 )
 
+/**
+	wangyang slice对应的结构体 ,slice 结构体的类型由 sliceType 实现
+ */
 type slice struct {
 	array unsafe.Pointer
 	len   int

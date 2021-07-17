@@ -575,6 +575,9 @@ TEXT runtime·settls(SB),NOSPLIT,$32
 	*/
 	SUBQ $0x8a0, DI
 
+    /**
+        wangyang 这里也是 系统调用 darwin系统触发一个系统调用
+    */
 	MOVL	$(0x3000000+3), AX	// thread_fast_set_cthread_self - machdep call #3
 	SYSCALL
 	RET

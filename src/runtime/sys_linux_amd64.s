@@ -519,6 +519,7 @@ TEXT runtime·madvise(SB),NOSPLIT,$0
 
 // int64 futex(int32 *uaddr, int32 op, int32 val,
 //	struct timespec *timeout, int32 *uaddr2, int32 val2);
+//wangyang 这里使用了 futex 实现了wait signal等功能 , 调用了 sys_futex 系统调用
 TEXT runtime·futex(SB),NOSPLIT,$0
 	MOVQ	addr+0(FP), DI
 	MOVL	op+8(FP), SI
@@ -531,26 +532,33 @@ TEXT runtime·futex(SB),NOSPLIT,$0
 	MOVL	AX, ret+40(FP)
 	RET
 
+/**
+    非常重要 clone 系统调用，创建一个系统线程，并执行mstart 函数
+*/
 // int32 clone(int32 flags, void *stk, M *mp, G *gp, void (*fn)(void));
 TEXT runtime·clone(SB),NOSPLIT,$0
-	MOVL	flags+0(FP), DI
-	MOVQ	stk+8(FP), SI
+	MOVL	flags+0(FP), DI //di=flags
+	MOVQ	stk+8(FP), SI //si=stk
 	MOVQ	$0, DX
 	MOVQ	$0, R10
 
 	// Copy mp, gp, fn off parent stack for use by child.
 	// Careful: Linux system call clobbers CX and R11.
-	MOVQ	mp+16(FP), R8
-	MOVQ	gp+24(FP), R9
-	MOVQ	fn+32(FP), R12
+	MOVQ	mp+16(FP), R8 //r8 = mp
+	MOVQ	gp+24(FP), R9 //r9 = gp (g0)
+	MOVQ	fn+32(FP), R12 //r12 = fn
 
-	MOVL	$SYS_clone, AX
-	SYSCALL
+	MOVL	$SYS_clone, AX // --> linux 系统调用号
+	SYSCALL //-->系统调用
 
+    /**
+        这里会返回2遍，如果结果是0 那么是子线程当中执行pc + 3 也就是往下3条开始执行
+        如果不是，那么执行ret ,说明是在父线程当中
+    */
 	// In parent, return.
 	CMPQ	AX, $0
 	JEQ	3(PC)
-	MOVL	AX, ret+40(FP)
+	MOVL	AX, ret+40(FP) //--> 将ax 放到返回值的位置
 	RET
 
 	// In child, on new stack.
@@ -563,20 +571,21 @@ TEXT runtime·clone(SB),NOSPLIT,$0
 	JEQ	nog
 
 	// Initialize m->procid to Linux tid
-	MOVL	$SYS_gettid, AX
+	MOVL	$SYS_gettid, AX //--> 使用ax寄存器 进行系统调用，结果放到ax寄存器中
 	SYSCALL
-	MOVQ	AX, m_procid(R8)
+	MOVQ	AX, m_procid(R8) //m.procid = ax (sys_gettid) 这里就可以看到 结果是从ax寄存器到内存一个位置
 
 	// Set FS to point at m->tls.
-	LEAQ	m_tls(R8), DI
-	CALL	runtime·settls(SB)
+	LEAQ	m_tls(R8), DI //--> 将m 的 tls地址设置到 [tls]寄存器（也就是fs）段的基址位置，方便取出
+	CALL	runtime·settls(SB) // --> 调用settls字段，设置tls
 
 	// In child, set up new stack
 	get_tls(CX)
 	MOVQ	R8, g_m(R9)
-	MOVQ	R9, g(CX)
+	MOVQ	R9, g(CX) //--> 将g0的值移动到 当前线程对应的m的局部变量位置，表示当前对应的g 也就是getg函数对应的g
 	CALL	runtime·stackcheck(SB)
 
+//--> 这里都会顺序往下执行
 nog:
 	// Call fn
 	CALL	R12
@@ -597,7 +606,37 @@ TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
 	MOVL	$0xf1, 0xf1  // crash
 	RET
 
+/**
+    重要，这里是 设置 tls寄存器的位置
+    FS寄存器指向当前活动线程的TEB结构（线程结构）
+    偏移  说明
+    000  指向SEH链指针
+    004  线程堆栈顶部
+    008  线程堆栈底部
+    00C  SubSystemTib
+    010  FiberData
+    014  ArbitraryUserPointer
+    018  FS段寄存器在内存中的镜像地址
+    020  进程PID
+    024  线程ID
+    02C  指向线程局部存储指针
+    030  PEB结构地址（进程结构）
+    034  上个错误号
+
+    从代码可以看到，这里通过arch_prctl系统调用把m0.tls[1]的地址设置成了fs段的段基址。
+    CPU中有个叫fs的段寄存器与之对应，而每个线程都有自己的一组CPU寄存器值，
+    操作系统在把线程调离CPU运行时会帮我们把所有寄存器中的值保存在内存中，
+    调度线程起来运行时又会从内存中把这些寄存器的值恢复到CPU，这样，在此之后，
+    工作线程代码就可以通过fs寄存器来找到m.tls，读者可以参考上面初始化tls之后对tls功能验证的代码来理解这一过程。
+
+*/
+
+/*
+    wangyang ***  非常重要，这里是设置tls tls是个固定的位置，是基于fs 开始偏移的，这里将m0->tls[1]的地址设置到这里
+    所以 TLS 本身就是 -8 是一个偏移值
+*/
 // set tls base to DI
+//ARCH_SET_FS	Set the 64bit base for the FS register toaddr.
 TEXT runtime·settls(SB),NOSPLIT,$32
 #ifdef GOOS_android
 	// Same as in sys_darwin_386.s:/ugliness, different constant.
@@ -607,11 +646,50 @@ TEXT runtime·settls(SB),NOSPLIT,$32
 #else
 	ADDQ	$8, DI	// ELF wants to use -8(FS)
 #endif
-	MOVQ	DI, SI
-	MOVQ	$0x1002, DI	// ARCH_SET_FS
-	MOVQ	$SYS_arch_prctl, AX
+//DI寄存器中存放的是m.tls[0]的地址，m的tls成员是一个数组，读者如果忘记了可以回头看一下m结构体的定义
+//下面这一句代码把DI寄存器中的地址加8，为什么要+8呢，主要跟ELF可执行文件格式中的TLS实现的机制有关
+//执行下面这句指令之后DI寄存器中的存放的就是m.tls[1]的地址了
+/**
+    这里的目的是将tls[1]的地址保存到主线程的线程局部变量中, tls 对应的是线程的局部存储初始地址
+    也就是fs_base寄存器所存储的位置，默认是0 ，第一个变量的存储就是 0xffffff8(-8)这样的一个位置
+
+    将tls[1]这个地址存放到线程的 局部偏移中
+
+    下面函数实际上是调用 相应的 相应的系统调用 (sys_arch_prctl) 系统调用 ，
+    下面的0x1002指的是 arch_set_fs系统调用
+
+    int arch_prctl(int code, unsigned long addr);
+    arch_prctl()设置特定于体系结构的进程或线程状态。代码选择一个子函数并将参数addr传递给它；
+    对于 set 操作，addr解释为无符号long，对于 get 操作，解释为unsigned long *。
+    x86和x86-64的子功能是：
+    ARCH_SET_FS
+    将FS寄存器的64位基址设置为addr。
+    ARCH_GET_FS
+    返回addr指向的无符号长整数中当前线程FS寄存器的64位基值。
+    ARCH_SET_GS
+    将GS寄存器的64位基址设置为addr。
+    ARCH_GET_GS
+    返回addr指向的无符号长整数中当前线程的GS寄存器的64位基值。
+*/
+
+/*
+    所以这里有 三个 参数 ，系统调用号 在ax寄存器中，
+    系统调用第一个参数 在di寄存器中
+    系统调用第二个参数 在si寄存器中
+
+    所以传递过来的是 tls[0]的地址，但是将tls[1]的地址设置成为 fs段基地址
+
+    首先这个 函数的名称是 settls 也就是设置 tls地址，会将 tls[1]的地址设置成为 fs段基地址
+    所以也就是 TLS地址
+
+    这里的作用就是将 tls[1] 的地址设置成为 当前线程 thread local 基地址
+    我们这里可以理解为 将 tls[1] 的地址设置成为 fs 段寄存器 基地址
+*/
+	MOVQ	DI, SI //SI存放arch_prctl系统调用的第二个参数
+	MOVQ	$0x1002, DI	// ARCH_SET_FS // ARCH_SET_FS //arch_prctl的第一个参数 --> 系统调用号
+	MOVQ	$SYS_arch_prctl, AX // --> 这个常量是158
 	SYSCALL
-	CMPQ	AX, $0xfffffffffffff001
+	CMPQ	AX, $0xfffffffffffff001 //--> 进行比较
 	JLS	2(PC)
 	MOVL	$0xf1, 0xf1  // crash
 	RET

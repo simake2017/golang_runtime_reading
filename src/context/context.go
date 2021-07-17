@@ -243,6 +243,10 @@ func propagateCancel(parent Context, child canceler) {
 	if parent.Done() == nil {
 		return // parent is never canceled
 	}
+
+	/**
+		通过这句话 将自身context 添加到 父类的map中
+	 */
 	if p, ok := parentCancelCtx(parent); ok {
 		p.mu.Lock()
 		if p.err != nil {
@@ -314,7 +318,7 @@ func init() {
 // A cancelCtx can be canceled. When canceled, it also cancels any children
 // that implement canceler.
 type cancelCtx struct {
-	Context
+ 	Context //默认 Context类型的字段就是Context
 
 	mu       sync.Mutex            // protects following fields
 	done     chan struct{}         // created lazily, closed by first cancel call
@@ -322,6 +326,9 @@ type cancelCtx struct {
 	err      error                 // set to non-nil by the first cancel call
 }
 
+/**
+	done 方法返回的是一个 <-chan 类型
+ */
 func (c *cancelCtx) Done() <-chan struct{} {
 	c.mu.Lock()
 	if c.done == nil {
@@ -344,6 +351,9 @@ func (c *cancelCtx) String() string {
 
 // cancel closes c.done, cancels each of c's children, and, if
 // removeFromParent is true, removes c from its parent's children.
+/**
+	取消的时候 会执行 cancel方法
+ */
 func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 	if err == nil {
 		panic("context: internal error: missing cancel error")
@@ -357,8 +367,11 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 	if c.done == nil {
 		c.done = closedchan
 	} else {
-		close(c.done)
+		close(c.done) //--> 关闭这里的done chan
 	}
+	/**
+		然后调用 这个context的子类型
+	 */
 	for child := range c.children {
 		// NOTE: acquiring the child's lock while holding parent's lock.
 		child.cancel(false, err)
@@ -380,13 +393,17 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 //
 // Canceling this context releases resources associated with it, so code should
 // call cancel as soon as the operations running in this Context complete.
+
+/**
+	父context 取消，子context也会相应取消 ,但是不会影响到父contex
+ */
 func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 	if cur, ok := parent.Deadline(); ok && cur.Before(d) {
 		// The current deadline is already sooner than the new one.
 		return WithCancel(parent)
 	}
 	c := &timerCtx{
-		cancelCtx: newCancelCtx(parent),
+		cancelCtx: newCancelCtx(parent), //以父context 创建一个cancelCtx
 		deadline:  d,
 	}
 	propagateCancel(parent, c)

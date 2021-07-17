@@ -176,6 +176,7 @@ type mheap struct {
 
 // mheap_ 是 runtime 内存管理的全局跟对象，一个golang程序只会有一个 mheap_ 。
 // mheap_ 由所有底层的线程共享。
+//wangyang 重要
 var mheap_ mheap
 
 // An MSpan is a run of pages.

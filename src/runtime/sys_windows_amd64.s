@@ -386,7 +386,7 @@ TEXT runtime·tstart_stdcall(SB),NOSPLIT,$0
 
 // set tls base to DI
 TEXT runtime·settls(SB),NOSPLIT,$0
-	MOVQ	DI, 0x28(GS)
+	MOVQ	DI, 0x28(GS) //wangyang windows就是将 DI寄存器 设置到 gs 寄存器 这个偏移的位置上
 	RET
 
 // func onosstack(fn unsafe.Pointer, arg uint32)

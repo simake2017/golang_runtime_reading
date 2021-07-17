@@ -18,6 +18,7 @@ import "unsafe"
 //go:linkname _cgo_set_context_function _cgo_set_context_function
 //go:linkname _cgo_yield _cgo_yield
 
+// 重要 这里的 cgo init 是一个指针，用于cgo初始化
 var (
 	_cgo_init                     unsafe.Pointer
 	_cgo_thread_start             unsafe.Pointer

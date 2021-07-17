@@ -294,6 +294,25 @@ const (
 // so that code cannot convert from, say, *arrayType to *ptrType.
 //
 // rtype must be kept in sync with ../runtime/type.go:/^type._type.
+/**
+	这里的类型 跟 _type 类型 字段一致
+ */
+/*
+size       uintptr
+	ptrdata    uintptr  size of memory prefix holding all pointers
+	hash       uint32
+	tflag      tflag
+	align      uint8
+	fieldalign uint8
+	kind       uint8
+	alg        *typeAlg
+	 gcdata stores the GC type data for the garbage collector.
+	 If the KindGCProg bit is set in kind, gcdata is a GC program.
+	 Otherwise it is a ptrmask bitmap. See mbitmap.go for details.
+	gcdata    *byte
+	str       nameOff
+	ptrToThis typeOff
+ */
 type rtype struct {
 	size       uintptr
 	ptrdata    uintptr  // number of bytes in the type that can contain pointers
@@ -305,6 +324,13 @@ type rtype struct {
 	alg        *typeAlg // algorithm table
 	gcdata     *byte    // garbage collection data
 	str        nameOff  // string form
+	/**
+		这是一个指向 当前类型的偏移，也就是说下面是一个指针，
+		基于当前这个结构体指针地址 的一个偏移 获取的一个类型，这个类型指向当前类型
+
+		typeOff 字段含义是 到rtype 的 字段偏移，在结合 字段值
+		就是指向当前rtype 的 偏移
+	 */
 	ptrToThis  typeOff  // type for pointer to this type, may be zero
 }
 
@@ -373,6 +399,10 @@ type chanType struct {
 //		uncommonType
 //		[2]*rtype    // [0] is in, [1] is out
 //	}
+/**
+funcType 继承在 rtype 同时又包含了 inCount以及 outCount
+函数类型 会有下面这种 funcType 的形式描述出来
+ */
 type funcType struct {
 	rtype    `reflect:"func"`
 	inCount  uint16
@@ -682,10 +712,12 @@ type nameOff int32 // offset to a name
 type typeOff int32 // offset to an *rtype
 type textOff int32 // offset from top of text section
 
+//这里的含义是 根据 一个基址指针 然后在加上一个 偏移用来获取一段 字节，然后转为name
 func (t *rtype) nameOff(off nameOff) name {
 	return name{(*byte)(resolveNameOff(unsafe.Pointer(t), int32(off)))}
 }
 
+//这里的含义是同上的
 func (t *rtype) typeOff(off typeOff) *rtype {
 	return (*rtype)(resolveTypeOff(unsafe.Pointer(t), int32(off)))
 }
@@ -836,7 +868,8 @@ func (t *rtype) NumMethod() int {
 func (t *rtype) Method(i int) (m Method) {
 	if t.Kind() == Interface {
 		tt := (*interfaceType)(unsafe.Pointer(t))
-		return tt.Method(i)
+		return tt.
+			Method(i)
 	}
 	methods := t.exportedMethods()
 	if i < 0 || i >= len(methods) {
@@ -1054,6 +1087,11 @@ func (t *funcType) in() []*rtype {
 	if t.inCount == 0 {
 		return nil
 	}
+	/**
+		1、首先使用函数基地址 + 函数类型大小，这样跳转到类型底部;
+		2、然后转为一个 *rtype 的数组指针 []*type 这样类型的指针;
+		3、然后截取相应的数量，就是in 类型
+	 */
 	return (*[1 << 20]*rtype)(add(unsafe.Pointer(t), uadd, "t.inCount > 0"))[:t.inCount]
 }
 
@@ -1062,10 +1100,14 @@ func (t *funcType) out() []*rtype {
 	if t.tflag&tflagUncommon != 0 {
 		uadd += unsafe.Sizeof(uncommonType{})
 	}
+	// 获取 出参 数量
 	outCount := t.outCount & (1<<15 - 1)
 	if outCount == 0 {
 		return nil
 	}
+	/**
+		其他原理同上，截取的是从 inCount位置 到 inCount + outCout截止
+	 */
 	return (*[1 << 20]*rtype)(add(unsafe.Pointer(t), uadd, "outCount > 0"))[t.inCount : t.inCount+outCount]
 }
 
@@ -1408,6 +1450,9 @@ func (t *structType) FieldByName(name string) (f StructField, present bool) {
 
 // TypeOf returns the reflection Type that represents the dynamic type of i.
 // If i is a nil interface value, TypeOf returns nil.
+/**
+	typeOf 获取的就是相应的Type 接口，底层可能对应 funcType chanType等
+ */
 func TypeOf(i interface{}) Type {
 	eface := *(*emptyInterface)(unsafe.Pointer(&i))
 	return toType(eface.typ)
@@ -1424,6 +1469,10 @@ func PtrTo(t Type) Type {
 
 func (t *rtype) ptrTo() *rtype {
 	if t.ptrToThis != 0 {
+		/**
+		这里获取的实际指向是一个指向 运行时 _typ 类型的指针，然后转为 rtype类型
+		所以实际的作用就是 获取 rtype 转为_typ 类型
+		 */
 		return t.typeOff(t.ptrToThis)
 	}
 
@@ -1956,6 +2005,10 @@ type funcTypeFixed128 struct {
 // The variadic argument controls whether the function is variadic. FuncOf
 // panics if the in[len(in)-1] does not represent a slice and variadic is
 // true.
+/**
+	wangyang 重要 这里的字段是堆外暴露的，可以用来获取相应的func 类型，具体实现
+	类型是 funcType 接口是 Type
+ */
 func FuncOf(in, out []Type, variadic bool) Type {
 	if variadic && (len(in) == 0 || in[len(in)-1].Kind() != Slice) {
 		panic("reflect.FuncOf: last arg of variadic func must be slice")

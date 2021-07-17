@@ -11,7 +11,9 @@
 // internal linking. This is the entry point for the program from the
 // kernel for an ordinary -buildmode=exe program. The stack holds the
 // number of arguments and the C-style argv.
+//2、wangyang 重要 这里是 函数的入口位置
 TEXT _rt0_amd64(SB),NOSPLIT,$-8
+//  这里用到的 SP是 真实的 硬件寄存器  所以 0 表示栈顶元素， +8 之后表示 上面的元素
 	MOVQ	0(SP), DI	// argc
 	LEAQ	8(SP), SI	// argv
 	JMP	runtime·rt0_go(SB)
@@ -110,6 +112,9 @@ runtime.newproc这个函数在创建普通的goroutine时也会使用, 在下面
 启动后m0会不断从运行队列获取G并运行, runtime.mstart调用后不会返回
 */
 
+/*
+    3、wangyang 重要 这里是 函数的入口位置
+*/
 TEXT runtime·rt0_go(SB),NOSPLIT,$0
 	// 处理arg
 	// copy arguments forward on an even stack
@@ -119,16 +124,20 @@ TEXT runtime·rt0_go(SB),NOSPLIT,$0
 	ANDQ	$~15, SP
 	MOVQ	AX, 16(SP)
 	MOVQ	BX, 24(SP)
-	
-	// 创建系统的栈
+
+	/**
+	    前面我们说过，g0的主要作用是提供一个栈供runtime代码执行，因此这里主要对g0的几个与栈有关的成员进行了初始化，从这里可以看出g0的栈大约有64K，地址范围为 SP - 64*1024 + 104 ～ SP
+	*/
+	// 创建系统的栈 -->也就是 g0的栈
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
-	MOVQ	$runtime·g0(SB), DI
-	LEAQ	(-64*1024+104)(SP), BX
-	MOVQ	BX, g_stackguard0(DI)
-	MOVQ	BX, g_stackguard1(DI)
-	MOVQ	BX, (g_stack+stack_lo)(DI)
-	MOVQ	SP, (g_stack+stack_hi)(DI)
+    //因为 全局静态变量都是基于 SB 寄存器存储，所以这里是获取g0的地址
+	MOVQ	$runtime·g0(SB), DI  //g0的地址放入DI寄存器 将变量g0的地址 放入到di寄存器中
+	LEAQ	(-64*1024+104)(SP), BX //--> 将sp 往下拓展大概64k 然后放入到bx寄存器 ,其实也就是栈顶的位置 (g0栈)
+	MOVQ	BX, g_stackguard0(DI) //--> 将栈顶位置放入到g0的 stackguard0位置
+	MOVQ	BX, g_stackguard1(DI)   //--> 将栈顶位置放入到g0的 stackguard0位置 ，后面用来进行栈溢出警戒线
+	MOVQ	BX, (g_stack+stack_lo)(DI) //--> 低地址位置
+	MOVQ	SP, (g_stack+stack_hi)(DI) //--> 高地址 位置
 
 	// 查找关于cpu的信息
 	// find out information about the processor we're on
@@ -247,12 +256,42 @@ needtls:
 	JMP ok
 #endif
 
-	LEAQ	runtime·m0+m_tls(SB), DI
-	CALL	runtime·settls(SB)
+    // --> 重要
+    // 第一句 将 m0 tls首地址设置到di寄存器
+	LEAQ	runtime·m0+m_tls(SB), DI ////DI=&m0.tls，取m0的tls成员的地址到DI寄存器
+	// -->//调用settls设置线程本地存储，settls函数的参数在DI寄存器中
+	//相应的文件在 sys_linux_amd64.s 文件中
+	CALL	runtime·settls(SB) //--> 没有$的情况下就是调用这个函数 或者 结构体
 
 	// store through it, to make sure it works
-	get_tls(BX)
-	MOVQ	$0x123, g(BX)
+	//g(r)	0(r)(TLS*1)
+
+   /**
+
+        wangyang:
+        TLS 也是伪寄存器，在不同的 架构模式下，对应的是不一样的，比如在 linux 系统中
+        对应的是 fs 寄存器，在win系统下 对应的是 gs 寄存器的偏移
+
+   */
+	//get_tls(r)	MOVQ TLS, r
+	//所以可以理解为 TLS对应的是  fs寄存器，存放的是 m->tls[1] 的首地址
+	//-->这里获取的是 存储在 这个位置的地址的值
+	// 方法定义在 go_tls.h中
+	get_tls(BX) //获取fs段基地址并放入BX寄存器，其实就是m0.tls[1]的地址，get_tls的代码由编译器生成
+	//g(r)	0(r)(TLS*1)
+	//3个 运算的例子
+	//LEAQ 16(BX)(AX*1), CX
+    // 整个表达式含义是 CX = 16 + BX + (AX * 1)
+
+    // tls 伪寄存器 代表的是 本地局部变量地址 , 将这个地址放置到 bs 然后 添加一个偏移 (TLS * 1)也就是8 wangyang @@ 这一句是正确的 (TLS * 1) 也就是tls寄存器对应的值 是8
+    //所以这里的含义是  bx + 0 + (TLS*1) 的 位置 也就是 tls[1]的地址 -8 也就是0 的 位置
+    //lea 指令用于 用于取地址或者进行复杂运算
+
+    //把整型常量0x123拷贝到fs段基地址偏移-8的内存位置，也就是m0.tls[0] = 0x123
+	MOVQ	$0x123, g(BX) //--> $ 开头指的是常量
+
+    // --> 这里加上这句 可以看到R8中的值为123，所以(TLS)对应了tls[0]的值 tls->指向了tls[0]的位置   MOVQ    (TLS), R8
+
 	MOVQ	runtime·m0+m_tls(SB), AX
 	CMPQ	AX, $0x123
 	JEQ 2(PC)
@@ -264,41 +303,59 @@ ok:
 	// 将该线程保存在m0
 	// tls: Thread Local Storage
 	// set the per-goroutine and per-mach "registers"
+	/**
+	    将m0与g0分别放入到 cx寄存器与ax寄存器，
+	    然后让他们分别互相引用，这样后面就有了互相的指针继续往下
+	*/
 	get_tls(BX)
 	LEAQ	runtime·g0(SB), CX
-	MOVQ	CX, g(BX)
+	MOVQ	CX, g(BX) //-->这里将 tls[0] 置为g0 wangyang @@@@@ 这里会将 g0 放入到 tls[0]的位置 但是TLS寄存器存放的是 tls[1]的位置
 	LEAQ	runtime·m0(SB), AX
 
 	// m0和g0互相绑定
 	// save m->g0 = g0
-	MOVQ	CX, m_g0(AX)
+	MOVQ	CX, m_g0(AX) //-->这里的意思是将m 的g0 字段设置为 g0对象
 	// save m0 to g0->m
 	MOVQ	AX, g_m(CX)
 
 	CLD				// convention is D is always left cleared
 	CALL	runtime·check(SB)
 
+    /**
+        这几条指令目的是将参数 argc argv 参数分别放到
+        sp之上的位置，方便下一个函数 args 调用
+    */
 	MOVL	16(SP), AX		// copy argc
 	MOVL	AX, 0(SP)
 	MOVQ	24(SP), AX		// copy argv
 	MOVQ	AX, 8(SP)
-	
+
+	/**
+	    调用 args函数
+	*/
 	CALL	runtime·args(SB) // 处理args
+	/**
+	    调用osinit函数
+	*/
 	CALL	runtime·osinit(SB) // os初始化， os_linux.go
+	/**
+	    调用 schedinit 函数
+	*/
 	CALL	runtime·schedinit(SB) // 调度系统初始化, proc.go
 
 	// 创建一个goroutine，然后开启执行程序
 	// create a new goroutine to start program
-	MOVQ	$runtime·mainPC(SB), AX		// entry
-	PUSHQ	AX
-	PUSHQ	$0			// arg size
-	CALL	runtime·newproc(SB)
+	MOVQ	$runtime·mainPC(SB), AX		// entry --> mainPC对应runtime main函数
+	PUSHQ	AX //--> 压到当前栈顶
+	PUSHQ	$0			// arg size -->继续压栈
+	//-->这里创建的是goroutine
+	CALL	runtime·newproc(SB) //--> 非常重要 在这里 调用 newproc函数 ，这里需要的2个参数在上面压入过来
 	POPQ	AX
 	POPQ	AX
 
 	// start this M
-	// 启动线程，并且启动调度系统
-	CALL	runtime·mstart(SB)
+	// 启动线程，并且启动调度系统 wangyang @@@@ 这里会单独调用 mstart 函数
+	CALL	runtime·mstart(SB) //--> 对应位置在 proc mstart
 
 	MOVL	$0xf1, 0xf1  // crash
 	RET
@@ -407,23 +464,41 @@ TEXT runtime·mcall(SB), NOSPLIT, $0-8
 TEXT runtime·systemstack_switch(SB), NOSPLIT, $0-0
 	RET
 
+/**
+    重要
+    调用 systemstack , 这里穿若干来一个 fn 应用类型
+
+    get_tls 是在 c 头文件中的声明
+    define	get_tls(r)	MOVL TLS, r
+    define	g(r)	0(r)(TLS*1)
+
+    这个函数局部是0 参数与返回值1个字节
+    这里的g 指的是g结构体，g_m 是相对ax寄存器对应的位置
+
+    在汇编 gogo 函数中，会把当前运行的g 放到tls中
+    把要运行的g的指针放入线程本地存储，这样后面的代码就可以通过线程本地存储
+    获取到当前正在执行的goroutine的g结构体对象，从而找到与之关联的m和p
+        MOVQ  DX, g(CX)
+*/
 // func systemstack(fn func())
+//wangyang @@@
 TEXT runtime·systemstack(SB), NOSPLIT, $0-8
-	MOVQ	fn+0(FP), DI	// DI = fn
-	get_tls(CX)
-	MOVQ	g(CX), AX	// AX = g
-	MOVQ	g_m(AX), BX	// BX = m
-
+	MOVQ	fn+0(FP), DI	// DI = fn --> 这里说的很清楚，让DI寄存器 = fn 的地址 这种方式获取的都是 内存的地址
+	get_tls(CX) // --> 获取 tls ，然后放到 cx寄存器
+	//g(r)	0(r)(TLS*1)
+	MOVQ	g(CX), AX	// AX = g --> 让ax = tls 的位置 ax = 0 + cx + (TLS * 1) 也就是 fs段寄存器+8
+	MOVQ	g_m(AX), BX	// BX = m --> 让bx = m
+    //首先判断g0 和 gsingal是否是一个 ，
 	MOVQ	m_gsignal(BX), DX	// DX = gsignal
-	CMPQ	AX, DX
+	CMPQ	AX, DX //-->相等的情况下执行noswitch 如果是 gsignal 那么也不切换
+	JEQ	noswitch //上面满足条件，跳转到 这里
+
+	MOVQ	m_g0(BX), DX	// DX = g0 这里才是 将g0 移动到 dx 寄存器当中
+	CMPQ	AX, DX //-->相等 执行下面 这里会比较 g0 和 tls[0] 是不是一个 值，如果相等执行 noswitch
 	JEQ	noswitch
 
-	MOVQ	m_g0(BX), DX	// DX = g0
-	CMPQ	AX, DX
-	JEQ	noswitch
-
-	MOVQ	m_curg(BX), R8
-	CMPQ	AX, R8
+	MOVQ	m_curg(BX), R8 //wangyang 这里是将 当前的 业务 curg 放入到r8 寄存器中
+	CMPQ	AX, R8 //wangyang @@@@ 从这一行可以看出 tls[0] 存放的 是当前正在执行的goroutine , 这里可以看出不相等说明 不是在g0栈上，需要执行 switch
 	JEQ	switch
 	
 	// Bad: g is not gsignal, not g0, not curg. What is it?
@@ -433,27 +508,31 @@ TEXT runtime·systemstack(SB), NOSPLIT, $0-8
 switch:
 	// save our state in g->sched. Pretend to
 	// be systemstack_switch if the G stack is scanned.
+	//systemstack_switch 是一个函数，将他的地址移动到si寄存器，具体作用先不管
 	MOVQ	$runtime·systemstack_switch(SB), SI
+	/**
+	    将当前寄存器的值保存到 当前对象形影的gobuf 结构体中， ax指向当前运行的g结构体
+	*/
 	MOVQ	SI, (g_sched+gobuf_pc)(AX)
 	MOVQ	SP, (g_sched+gobuf_sp)(AX)
 	MOVQ	AX, (g_sched+gobuf_g)(AX)
 	MOVQ	BP, (g_sched+gobuf_bp)(AX)
 
-	// switch to g0
-	MOVQ	DX, g(CX)
-	MOVQ	(g_sched+gobuf_sp)(DX), BX
+	// switch to g0 //--> wangyang @@@ 这里将 g0 移动到 tls 中，这样
+	MOVQ	DX, g(CX) //--> 将g0 移动到当前局部变量tls中 移动到 tls[0] 的位置  然后getg() 就可以获取 这个 goroutine
+	MOVQ	(g_sched+gobuf_sp)(DX), BX //--> 将 g0的sp 指针移动到bx寄存器
 	// make it look like mstart called systemstack on g0, to stop traceback
-	SUBQ	$8, BX
-	MOVQ	$runtime·mstart(SB), DX
-	MOVQ	DX, 0(BX)
-	MOVQ	BX, SP
+	SUBQ	$8, BX //--> 往下拓展8
+	MOVQ	$runtime·mstart(SB), DX //-->这里把 mstart函数地址放到dx寄存器
+	MOVQ	DX, 0(BX) //--> 放到bx 寄存器上面 (也就是g0 栈 sp的上面)
+	MOVQ	BX, SP // --> sp = bx (让sp指向g0栈的sp)
 
 	// call target function
-	MOVQ	DI, DX
-	MOVQ	0(DI), DI
+	MOVQ	DI, DX //-->将要调度的函数地址放到dx寄存器 (也就是 fn 所在内存的地址)
+	MOVQ	0(DI), DI //--> 基于DI进行偏移，将上面的fn的值取出 放入到di寄存器（也就是真正 fn 的函数地址）
 	CALL	DI
 
-	// switch back to g
+	// switch back to g -->执行完成之后在切换回来
 	get_tls(CX)
 	MOVQ	g(CX), AX
 	MOVQ	g_m(AX), BX

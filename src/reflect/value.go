@@ -138,6 +138,10 @@ func packEface(v Value) interface{} {
 
 // unpackEface converts the empty interface i to a Value.
 func unpackEface(i interface{}) Value {
+	/**
+		这里将结构体转为 emptyInterface 类型，一个是word 一个是type
+		word是指针 type 是一个运行时对这种类型的描述  比如 hash size ptr等等
+	 */
 	e := (*emptyInterface)(unsafe.Pointer(&i))
 	// NOTE: don't read e.word until we know whether it is really a pointer or not.
 	t := e.typ
@@ -2191,6 +2195,10 @@ func New(typ Type) Value {
 
 // NewAt returns a Value representing a pointer to a value of the
 // specified type, using p as that pointer.
+/**
+	返回一个类型 ,但是是以指针的方式进行的返回
+	这里返回类型 跟之前的类型是一样的，只是flag 变为指针类型，变得可以寻址
+ */
 func NewAt(typ Type, p unsafe.Pointer) Value {
 	fl := flag(Ptr)
 	return Value{typ.common().ptrTo(), p, fl}

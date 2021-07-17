@@ -79,6 +79,9 @@ func (pd *pollDesc) prepareWrite(isFile bool) error {
 	return pd.prepare('w', isFile)
 }
 
+/**
+	会调用 wait 函数阻塞直到有read 事件发生
+ */
 func (pd *pollDesc) wait(mode int, isFile bool) error {
 	if pd.runtimeCtx == 0 {
 		return errors.New("waiting for unsupported file type")

@@ -61,7 +61,7 @@ var ErrNoProgress = errors.New("multiple Read calls return no data or error")
 // An instance of this general case is that a Reader returning
 // a non-zero number of bytes at the end of the input stream may
 // return either err == EOF or err == nil. The next Read should
-// return 0, EOF.
+// return 0, EOF. -->或者返回eof 或者不是，eof 是结束的标识
 //
 // Callers should always process the n > 0 bytes returned before
 // considering the error err. Doing so correctly handles I/O errors
@@ -74,6 +74,9 @@ var ErrNoProgress = errors.New("multiple Read calls return no data or error")
 // nothing happened; in particular it does not indicate EOF.
 //
 // Implementations must not retain p.
+/**
+
+ */
 type Reader interface {
 	Read(p []byte) (n int, err error)
 }

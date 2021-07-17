@@ -57,6 +57,10 @@ func argv_index(argv **byte, i int32) *byte {
 	return *(**byte)(add(unsafe.Pointer(argv), uintptr(i)*sys.PtrSize))
 }
 
+/**
+	重要，调用args参数，从
+	asm_amd64.s rt0_go 函数而来
+ */
 func args(c int32, v **byte) {
 	argc = c
 	argv = v

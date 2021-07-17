@@ -71,6 +71,9 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		return
 	}
 
+	/**
+		kill 信号
+	 */
 	if flags&_SigKill != 0 {
 		dieFromSignal(sig)
 	}
